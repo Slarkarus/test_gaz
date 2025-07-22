@@ -4,6 +4,8 @@ from sqlalchemy import create_engine, Column, Integer, String, DateTime, text
 from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy.exc import SQLAlchemyError
 import os
+import asyncio
+from contextlib import asynccontextmanager
 
 DATABASE_URL = os.getenv("DB_URL", "postgresql+psycopg2://postgres:postgres@db:5432/measurements_db")
 
@@ -19,11 +21,32 @@ class Measurement(Base):
     value = Column(Integer, nullable=False)
     timestamp = Column(DateTime(timezone=True), default=datetime.utcnow)
 
-app = FastAPI()
+async def wait_for_db():
+    retries = 5
+    delay = 2  # seconds
+    for attempt in range(retries):
+        try:
+            with SessionLocal() as session:
+                session.execute(text("SELECT 1"))
+                print("✅ Database connection successful")
+                return
+        except SQLAlchemyError as e:
+            if attempt == retries - 1:
+                raise Exception(f"❌ Failed to connect to database after {retries} attempts") from e
+            print(f"⚠️ Database connection failed (attempt {attempt+1}/{retries}), retrying in {delay}s...")
+            await asyncio.sleep(delay)
 
-@app.on_event("startup")
-def startup():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Wait for database to be ready
+    await wait_for_db()
+    
+    # Create tables
     Base.metadata.create_all(bind=engine)
+    print("✅ Database tables created")
+    yield
+
+app = FastAPI(lifespan=lifespan)
 
 @app.get("/devices")
 def get_devices():
