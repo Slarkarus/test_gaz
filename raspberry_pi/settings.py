@@ -15,3 +15,5 @@ MODBUS_CLIENT_CONFIG = {
         }
     ]
 }
+
+SERVER_URL = "http://158.160.163.158:3005"

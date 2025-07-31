@@ -6,15 +6,15 @@ from sender import send_data
 
 def main():
     log("Start main")
-    #client = ModbusClient(MODBUS_CLIENT_CONFIG)
-    #client.connect()
+    client = ModbusClient(MODBUS_CLIENT_CONFIG)
+    client.connect()
 
     for _ in range(100):
-        data = ("HNO3", 42.2)
+        data = client.get_data()
         for measurement, value in data:
             send_data(measurement, value)
         sleep(1)
-    #client.close()
+    client.close()
     
 
 if __name__ == "__main__":
