@@ -1,0 +1,105 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Measurement API",
+    "version": "1.0.0",
+    "description": "API for sensor measurements"
+  },
+  "servers": [
+    {
+      "url": "http://localhost:3005",
+      "description": "Development server"
+    }
+  ],
+  "paths": {
+    "/measurement/sendData": {
+      "post": {
+        "summary": "Send measurement data",
+        "tags": ["Measurement"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MeasurementData"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Data successfully stored"
+          }
+        }
+      }
+    },
+    "/measurement/getData": {
+      "get": {
+        "summary": "Get measurement data",
+        "tags": ["Measurement"],
+        "responses": {
+          "200": {
+            "description": "List of measurements",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Measurement"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "MeasurementData": {
+        "type": "object",
+        "required": ["measurement", "timestamp", "value"],
+        "properties": {
+          "measurement": {
+            "type": "string",
+            "example": "temperature"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "example": "2023-07-31T12:00:00Z"
+          },
+          "value": {
+            "type": "number",
+            "format": "double",
+            "example": 25.5
+          }
+        }
+      },
+      "Measurement": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "example": 1
+          },
+          "measurement": {
+            "type": "string",
+            "example": "temperature"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "example": "2023-07-31T12:00:00Z"
+          },
+          "value": {
+            "type": "number",
+            "format": "double",
+            "example": 25.5
+          }
+        }
+      }
+    }
+  }
+}

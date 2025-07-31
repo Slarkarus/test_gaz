@@ -1,0 +1,459 @@
+.env
+PORT=3005
+DB_NAME=measurement
+DB_USER=postgres
+DB_PASSWORD=postgres
+DB_HOST=postgres
+DB_PORT=5432
+EN_WORDS_FILE=/express-docker/service/WordService/words_alpha.txt
+ACCESS_SECRET_KEY=ACCESS_REALLY_SECRET_KEY
+REFRESH_SECRET_KEY=ACCESS_REALLY_SECRET_KEY
+
+compose.yaml
+name: nodeserver
+
+services:
+  server:
+    build:
+      dockerfile: Dockerfile_app
+      context: .
+    ports:
+      - "3005:3005"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    build:
+      dockerfile: Dockerfile_db
+      context: .
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 1s
+      timeout: 5s
+      retries: 50
+
+  vault:
+    image: vault:1.13.3
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: dev-only-token
+    ports:
+      - "8200:8200"
+    healthcheck:
+      test: nc -z vault 8200 || exit -1
+      start_period: 3s
+      interval: 1s
+      timeout: 4s
+      retries: 50
+
+Dockerfile_app
+FROM node:slim
+WORKDIR /express-docker
+COPY . .
+RUN npm install
+CMD node index.js
+
+Dockerfile_db
+FROM postgres
+ENV POSTGRES_USER postgres
+ENV POSTGRES_PASSWORD postgres
+ENV POSTGRES_DB measurement
+
+index.js
+const express = require("express");
+const sequelize = require("./db/db");
+const router = require("./router");
+const cookieParser = require("cookie-parser");
+const swaggerUi = require("swagger-ui-express");
+const swaggerDocument = require("./swagger/index.json");
+const cors = require("cors");
+
+require("dotenv").config();
+
+const app = express();
+const port = process.env.PORT || 3000;
+
+app.use(cors());
+app.use(express.json());
+app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerDocument));
+app.use(cookieParser());
+app.use("", router);
+
+async function start() {
+  await sequelize.authenticate();
+  await sequelize.sync();
+  app.listen(port, () => {
+    console.log(`Listening on port ${port}`);
+  });
+}
+
+start();
+
+Makefile
+build:
+	docker compose build
+
+buildAndRun:
+	-docker compose down
+	docker compose build
+	docker compose up
+
+run:
+	-docker compose down
+	docker compose up
+
+runServer:
+	node index.js
+	
+
+package.json
+{
+  "name": "backend",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "bcrypt": "^5.1.1",
+    "cookie-parser": "^1.4.6",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "express-validator": "^7.1.0",
+    "moment": "^2.30.1",
+    "pg": "^8.12.0",
+    "sequelize": "^6.37.3",
+    "swagger-ui-express": "^5.0.1"
+  }
+}
+
+controller\MeasurementController.js
+const measurementService = require("../service/MeasurementService");
+const { validationResult } = require("express-validator");
+
+class MeasurementController {
+    async sendData(req, res, next){
+        try{
+            const errors = validationResult(req);
+            if (!errors.isEmpty()) {
+                return next(ApiError.badRequest(JSON.stringify(errors.mapped())));
+            }
+            const {measurement, timestamp, value} = req.body;
+            const {measurementDTO} = await measurementService.sendData(
+                measurement,
+                timestamp,
+                value
+            );
+            return res.status(200).end();
+        }
+        catch (e) {
+            next(e);
+        }
+    }
+
+    async getData(req, res, next){
+        try{
+            const {measurement, timestamp} = req.query;
+            const measurements = await measurementService.getData(measurement, timestamp);
+            return res.json(measurements);
+        }
+        catch (e){
+            next(e);
+        }
+    }
+
+    async getAllMeasurementTypes(req, res, next) {
+        try {
+            const types = await measurementService.getAllMeasurementTypes();
+            return res.json(types.map(item => item.measurement));
+        } catch (e) {
+            next(e);
+        }
+    }
+}
+
+module.exports = new MeasurementController();
+
+db\db.js
+const {Sequelize} = require('sequelize')
+require('dotenv').config();
+
+const sequelize = new Sequelize(
+    process.env.DB_NAME,
+    process.env.DB_USER ,
+    process.env.DB_PASSWORD ,
+    {
+        dialect: 'postgres',
+        host: process.env.DB_HOST,
+        port: process.env.DB_PORT,
+        logging: false,
+        reconnect: true
+    }
+)
+
+
+
+module.exports = sequelize;
+
+db\index.js
+const { DataTypes } = require("sequelize");
+const sequelize = require("./db");
+
+const Measurement = sequelize.define("measurement", {
+  id: {type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true},
+  measurement: {type: DataTypes.STRING, allowNull: false},
+  timestamp: {type: DataTypes.DATE, allowNull: false},
+  value: {type: DataTypes.DOUBLE, allowNull: false},
+});
+
+module.exports = {
+  Measurement
+};
+
+dto\measurement_dto.js
+class Measurement_dto{
+    id;
+    measurement;
+    timestamp;
+    value;
+    
+    constructor(model) {
+        this.id = model.id;
+        this.measurement = model.measurement;
+        this.timestamp = model.timestamp;
+        this.value = model.value;
+    }
+}
+
+module.exports = Measurement_dto;
+
+errors\index.js
+class ApiError extends Error {
+
+    status;
+    message;
+
+    constructor(status, message) {
+        super();
+        this.status = status;
+        this.message = message;
+    }
+
+    static badRequest(message = 'Bad request'){
+        return new ApiError(400, message)
+    }
+
+    static notFound(message = 'Not found'){
+        return new ApiError(404, message)
+    }
+
+    static internal(message = 'Internal server error'){
+        return new ApiError(500, message)
+    }
+
+    static forbidden(message = 'Forbidden'){
+        return new ApiError(403, message)
+    }
+
+    static unauthorized(message = 'User not found'){
+        return new ApiError(401, message)
+    }
+}
+
+module.exports = ApiError;
+
+router\index.js
+const express = require("express");
+const measurementRouter = require("./MeasurementRouter");
+
+const router = express.Router();
+
+router.use("/measurement", measurementRouter)
+
+module.exports = router;
+
+router\MeasurementRouter\index.js
+const express = require('express');
+const { body } = require('express-validator')
+const measurementController = require("../../controller/MeasurementController.js")
+const router = express.Router();
+
+router.post(
+    "/sendData",
+    body("timestamp").exists(),
+    body("measurement").isString(),
+    body("value").exists(),
+    measurementController.sendData
+);
+
+router.get(
+    "/getData",
+    measurementController.getData
+);
+
+router.get(
+    "/measurementTypes",
+    measurementController.getAllMeasurementTypes
+);
+
+module.exports = router;
+
+service\MeasurementService.js
+const { Measurement } = require("../db");
+const Measurement_dto = require("../dto/measurement_dto");
+const { Op, Sequelize  } = require("sequelize");
+const {sequelize} = require("../db/db");
+const moment = require('moment');
+
+class MeasurementService{
+    async sendData(measurement, timestamp, value){
+        const measurementRow = await Measurement.create({
+            measurement: measurement,
+            timestamp: timestamp, 
+            value: value
+        });
+        measurementRow.save();
+
+        const measurementDTO = new Measurement_dto(measurementRow);
+
+        return {
+            measurement: measurementDTO
+        };
+    }
+
+    async getData(measurement, timestamp){
+        const where = {};
+        
+        if (measurement) where.measurement = measurement;
+        if (timestamp){
+            const formattedTimestamp = moment(timestamp).toISOString();
+            where.timestamp = { [Op.gt]: formattedTimestamp };
+        }
+        
+        return await Measurement.findAll({ where });
+    }
+
+    async getAllMeasurementTypes() {
+        return await Measurement.findAll({
+            attributes: [[Sequelize.fn('DISTINCT', Sequelize.col('measurement')), 'measurement']],
+            raw: true
+        });
+    }
+        
+}
+
+module.exports = new MeasurementService();
+
+swagger\index.json
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Measurement API",
+    "version": "1.0.0",
+    "description": "API for sensor measurements"
+  },
+  "servers": [
+    {
+      "url": "http://localhost:3005",
+      "description": "Development server"
+    }
+  ],
+  "paths": {
+    "/measurement/sendData": {
+      "post": {
+        "summary": "Send measurement data",
+        "tags": ["Measurement"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MeasurementData"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Data successfully stored"
+          }
+        }
+      }
+    },
+    "/measurement/getData": {
+      "get": {
+        "summary": "Get measurement data",
+        "tags": ["Measurement"],
+        "responses": {
+          "200": {
+            "description": "List of measurements",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Measurement"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "MeasurementData": {
+        "type": "object",
+        "required": ["measurement", "timestamp", "value"],
+        "properties": {
+          "measurement": {
+            "type": "string",
+            "example": "temperature"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "example": "2023-07-31T12:00:00Z"
+          },
+          "value": {
+            "type": "number",
+            "format": "double",
+            "example": 25.5
+          }
+        }
+      },
+      "Measurement": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "example": 1
+          },
+          "measurement": {
+            "type": "string",
+            "example": "temperature"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "example": "2023-07-31T12:00:00Z"
+          },
+          "value": {
+            "type": "number",
+            "format": "double",
+            "example": 25.5
+          }
+        }
+      }
+    }
+  }
+}
+
